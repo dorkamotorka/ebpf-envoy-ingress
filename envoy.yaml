@@ -28,6 +28,22 @@ static_resources:
           - name: envoy.access_loggers.stdout
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                json_format:
+                  start_time: "%START_TIME%"
+                  method: "%REQ(:METHOD)%"
+                  path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                  protocol: "%PROTOCOL%"
+                  host_header: "%REQ(:AUTHORITY)%"
+                  route_name: "%ROUTE_NAME%"
+                  virtual_cluster: "%VIRTUAL_CLUSTER_NAME%"
+                  upstream_cluster: "%UPSTREAM_CLUSTER%"
+                  upstream_host: "%UPSTREAM_HOST%"
+                  response_code: "%RESPONSE_CODE%"
+                  response_flags: "%RESPONSE_FLAGS%"
+                  duration_ms: "%DURATION%"
+                  downstream_remote: "%DOWNSTREAM_REMOTE_ADDRESS%"
+                  request_id: "%REQ(X-REQUEST-ID)%"
 
   clusters:
   - name: echo_service
