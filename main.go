@@ -38,7 +38,6 @@ func main() {
     		flag.PrintDefaults()
 		log.Fatalf("Usage: %s -pid <PID> -fd <FD>", os.Args[0])
 	}
-	log.Printf("Proxying traffic to process with PID %d and FD %d", *targetPid, *targetFd)
 
 	// Using pidfd avoids PID-reuse races when referring to a specific process.
 	targetPidFd, err := pidfd.Open(*targetPid, 0)
@@ -74,6 +73,13 @@ func main() {
 	}
 	defer netns.Close()
 
+
+	var pid uint32 = uint32(*targetPid)
+	var value uint32 = 0
+	if err := objs.tproxyMaps.PidMap.Update(&pid, &value, ebpf.UpdateAny); err != nil {
+		log.Fatalf("Failed to update pid_map (pid %d): %v", pid, err)
+	}
+
 	// Attach the eBPF sk_lookup program to the namespace.
 	// Multiple programs can be attached; they run in the order attached.
 	// Established connections won't trigger sk_lookup.
@@ -92,11 +98,11 @@ func main() {
 
 	// Register ports that should be redirected to the chosen socket.
 	// Values are placeholders (0) for now.
-	insertEchoPort(uint32(8081), uint64(0), objs.EchoPorts)
-	insertEchoPort(uint32(8082), uint64(0), objs.EchoPorts)
-	insertEchoPort(uint32(8083), uint64(0), objs.EchoPorts)
+	if err := insertEchoPort(uint32(80), uint64(1), objs.EchoPorts); err != nil {
+		log.Fatalf("Failed to update Echo Port eBPF map: %v", err)
+	}
 	log.Printf("Program running..")
-	log.Printf("TProxy redirecting requests on ports [8081,8082,8083]")
+	log.Printf("TProxy redirecting requests on port 80 to process with PID %d and FD %d", *targetPid, *targetFd)
 
 	// Block until a termination signal is received.
 	<-ctx.Done()
