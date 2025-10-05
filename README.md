@@ -1,6 +1,6 @@
 # ebpf-envoy
 
-An experimental integration of eBPF with Envoy proxy for advanced traffic redirection at the socket level.
+An experimental integration of eBPF with Envoy proxy for transparent traffic redirection at the socket level.
 
 ## Overview
 
