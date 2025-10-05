@@ -6,6 +6,7 @@ services:
     container_name: envoy
     depends_on:
       - echo
+      - echo2
     network_mode: host
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
@@ -16,4 +17,12 @@ services:
     image: ealen/echo-server
     container_name: echo
     network_mode: host
+    restart: unless-stopped
+
+  echo2:
+    image: ealen/echo-server
+    container_name: echo2
+    network_mode: host
+    environment:
+      - PORT=81
     restart: unless-stopped

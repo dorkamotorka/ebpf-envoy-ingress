@@ -67,7 +67,7 @@ static_resources:
   - name: echo_service                     # Cluster name referenced in route_config
     type: STATIC                           # Static endpoint definition (no service discovery)
     connect_timeout: 1s                    # Timeout for connecting to upstream service
-    lb_policy: ROUND_ROBIN                 # Load-balancing policy (only one endpoint here)
+    lb_policy: ROUND_ROBIN                 # Load-balancing policy
     load_assignment:
       cluster_name: echo_service
       endpoints:
@@ -75,8 +75,13 @@ static_resources:
         - endpoint:
             address:
               socket_address:
-                address: 127.0.0.1         # Upstream backend IP (same host)
+                address: 127.0.0.1         # Upstream backend IP
                 port_value: 80             # Upstream backend port (the echo service listens here)
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 81
 
 # Admin interface for Envoy
 admin:
