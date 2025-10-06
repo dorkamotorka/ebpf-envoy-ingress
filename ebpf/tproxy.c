@@ -6,6 +6,7 @@
 
 #define AF_INET 2
 #define SO_ORIGINAL_DST 80
+#define SOL_IP 0
 
 // Map of open service ports that we listen on for requests
 struct {
@@ -103,7 +104,7 @@ int redirect(struct bpf_sk_lookup *ctx) {
 
 SEC("cgroup/getsockopt")
 int cg_getsockopt(struct bpf_sockopt *ctx) {
-	if (!ctx->sk || ctx->optname != SO_ORIGINAL_DST) {
+	if (!ctx->sk || ctx->level != SOL_IP || ctx->optname != SO_ORIGINAL_DST) {
 		return 1;
 	}
 	if (ctx->sk->family != AF_INET) {
