@@ -15,6 +15,10 @@ import (
 	"github.com/oraoto/go-pidfd"
 )
 
+const (
+	CGROUP_PATH = "/sys/fs/cgroup" // Root cgroup path
+)
+
 // insertEchoPort stores a (port -> value) entry into the EchoPorts eBPF map.
 // Example:
 // * key: TCP destination port to match
@@ -66,28 +70,11 @@ func main() {
 	}
 	defer objs.Close()
 
-	// Open our current network namespace; the eBPF program will attach to it.
-	netns, err := os.Open("/proc/self/ns/net")
-	if err != nil {
-		log.Fatalf("netns: open /proc/self/ns/net failed: %v", err)
-	}
-	defer netns.Close()
-
-
 	var pid uint32 = uint32(*targetPid)
 	var value uint32 = 0
 	if err := objs.tproxyMaps.PidMap.Update(&pid, &value, ebpf.UpdateAny); err != nil {
 		log.Fatalf("Failed to update pid_map (pid %d): %v", pid, err)
 	}
-
-	// Attach the eBPF sk_lookup program to the namespace.
-	// Multiple programs can be attached; they run in the order attached.
-	// Established connections won't trigger sk_lookup.
-	l, err := link.AttachNetNs(int(netns.Fd()), objs.Redirect)
-	if err != nil {
-		log.Fatalf("link: attach to current netns failed: %v", err)
-	}
-	defer l.Close()
 
 	// Store the duplicated socket FD into the EchoSocket BPF map (key=0).
 	var key uint32 = 0
@@ -101,6 +88,32 @@ func main() {
 	if err := insertEchoPort(uint32(80), uint64(1), objs.EchoPorts); err != nil {
 		log.Fatalf("Failed to update Echo Port eBPF map: %v", err)
 	}
+
+	// Open our current network namespace; the eBPF program will attach to it.
+	netns, err := os.Open("/proc/self/ns/net")
+	if err != nil {
+		log.Fatalf("netns: open /proc/self/ns/net failed: %v", err)
+	}
+	defer netns.Close()
+
+	// Attach the eBPF sk_lookup program to the namespace.
+	// Multiple programs can be attached; they run in the order attached.
+	// Established connections won't trigger sk_lookup.
+	l, err := link.AttachNetNs(int(netns.Fd()), objs.Redirect)
+	if err != nil {
+		log.Fatalf("link: attach to current netns failed: %v", err)
+	}
+	defer l.Close()
+
+	s, err := link.AttachCgroup(link.CgroupOptions{
+		Path:    CGROUP_PATH,
+		Attach:  ebpf.AttachCGroupGetsockopt,
+		Program: objs.CgGetsockopt,
+	})
+	if err != nil {
+		log.Print("Attaching CgSockOpt program to Cgroup:", err)
+	}
+	defer s.Close()
 
 	log.Printf("Program running..")
 	log.Printf("TProxy redirecting requests on port 80 to process with PID %d and FD %d", *targetPid, *targetFd)

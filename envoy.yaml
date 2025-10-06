@@ -1,86 +1,77 @@
 static_resources:
-  # listeners define where Envoy accepts incoming traffic 
   listeners:
-  - name: listener_http                     # Name of this listener
+  - name: listener_http
     address:
       socket_address:
-        address: 127.0.0.1                  # Listen on all localhost interface
-        port_value: 8080                    # Port Envoy will listen on for HTTP requests
+        address: 127.0.0.1
+        port_value: 8080
+    # ask the kernel for the original dst (which we set in our eBPF hook)
+    listener_filters:
+    - name: envoy.filters.listener.original_dst
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+
     filter_chains:
     - filters:
-      - name: envoy.filters.network.http_connection_manager   # Main HTTP filter
+      - name: envoy.filters.network.http_connection_manager
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-          stat_prefix: ingress_http         # Prefix for Envoy stats/metrics about this listener
-          
-          # Routing configuration
+          stat_prefix: ingress_http
+
           route_config:
-            name: echo_route                # Internal name for this routing config
+            name: echo_route
             virtual_hosts:
-            - name: backend                 # Virtual host name (groups routes under a domain)
-              domains: ["*"]                # Accept requests for any domain
+            - name: backend
+              domains: ["*"]
               routes:
               # BLOCK /param endpoint
               - match:
-                  prefix: "/param"                 # Match all requests starting with /param
+                  prefix: "/param"
                 direct_response:
-                  status: 403                      # Return HTTP 403 Forbidden
+                  status: 403
                   body:
                     inline_string: "Access to /param is blocked by Envoy"
-
-              # DEFAULT allowed endpoint
+              # forward to the ORIGINAL_DST cluster (restored by listener filter)
               - match:
-                  prefix: "/"                      # Match everything else
+                  prefix: "/"
                 route:
-                  cluster: echo_service
+                  cluster: original-dst
 
-          # HTTP filters
           http_filters:
-          - name: envoy.filters.http.router # The router filter forwards the request to the cluster
+          - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
-          # Log output configuration 
           access_log:
           - name: envoy.access_loggers.stdout
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
               log_format:
-                json_format:                 # Structured logs (JSON)
+                json_format:
                   start_time: "%START_TIME%"
-                  method: "%REQ(:METHOD)%"   # HTTP method (GET, POST, etc.)
-                  path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"  # Request path
-                  protocol: "%PROTOCOL%"     # HTTP/1.1, HTTP/2, etc.
-                  host_header: "%REQ(:AUTHORITY)%"             # Host header from the request
-                  route_name: "%ROUTE_NAME%"                   # Route name (if defined)
-                  virtual_cluster: "%VIRTUAL_CLUSTER_NAME%"    # Virtual cluster name (if used)
-                  upstream_cluster: "%UPSTREAM_CLUSTER%"       # Cluster Envoy routed to
-                  upstream_host: "%UPSTREAM_HOST%"             # IP/port of the chosen upstream host
-                  response_code: "%RESPONSE_CODE%"             # HTTP response code
-                  response_flags: "%RESPONSE_FLAGS%"           # Internal flags (e.g., UF for upstream failure)
-                  duration_ms: "%DURATION%"                    # Total request duration in ms
-                  downstream_remote: "%DOWNSTREAM_REMOTE_ADDRESS%"  # Client IP
-                  request_id: "%REQ(X-REQUEST-ID)%"            # Unique request ID
+                  method: "%REQ(:METHOD)%"
+                  path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                  protocol: "%PROTOCOL%"
+                  host_header: "%REQ(:AUTHORITY)%"
+                  route_name: "%ROUTE_NAME%"
+                  virtual_cluster: "%VIRTUAL_CLUSTER_NAME%"
+                  upstream_cluster: "%UPSTREAM_CLUSTER%"
+                  upstream_host: "%UPSTREAM_HOST%"
+                  response_code: "%RESPONSE_CODE%"
+                  response_flags: "%RESPONSE_FLAGS%"
+                  duration_ms: "%DURATION%"
+                  downstream_remote: "%DOWNSTREAM_REMOTE_ADDRESS%"
+                  request_id: "%REQ(X-REQUEST-ID)%"
 
-  # clusters define where to send the traffic
   clusters:
-  - name: echo_service                     # Cluster name referenced in route_config
-    type: STATIC                           # Static endpoint definition (no service discovery)
-    connect_timeout: 1s                    # Timeout for connecting to upstream service
-    lb_policy: ROUND_ROBIN                 # Load-balancing policy
-    load_assignment:
-      cluster_name: echo_service
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: 127.0.0.1         # Upstream backend IP
-                port_value: 80             # Upstream backend port (the echo service listens here)
+  # dial whatever address the listener restored from SO_ORIGINAL_DST
+  - name: original-dst
+    type: ORIGINAL_DST
+    connect_timeout: 1s
+    lb_policy: CLUSTER_PROVIDED
 
-# Admin interface for Envoy
 admin:
   address:
     socket_address:
-      address: 127.0.0.1                   # Admin interface only accessible locally
-      port_value: 9901                     # Port for admin UI and metrics (e.g. /stats, /clusters)
+      address: 127.0.0.1
+      port_value: 9901
