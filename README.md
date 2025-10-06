@@ -22,7 +22,7 @@ An experimental integration of eBPF with Envoy proxy for transparent traffic red
 ### Prerequisites
 
 - **Linux Kernel 6.10+** is required for `bpf_get_current_pid_tgid()` in the `sk_lookup` eBPF program type.
-- Go 1.24+ for building the CLI.
+- Go 1.23+ for building the CLI.
 - Docker for running Envoy and echo services.
 
 ### Building
@@ -34,11 +34,12 @@ go build
 
 ### Running
 
-1. Start Envoy and echo servers:
+1. Start Envoy and echo server:
 
    ```sh
    docker-compose up -d
    ```
+   **NOTE**: For simplicity, both container are deployed on the host network and the echo server container listens on port 80.
 
 2. Find the PID and FD of the Envoy process/socket:
 
@@ -52,11 +53,10 @@ go build
    sudo ./tproxy -pid <PID> -fd <FD>
    ```
 
-_Example from repo:_
-```sh
-sudo ss -lptn
-sudo ./tproxy -pid 1757219 -fd 54 # Choose one of the FDs of the envoy proxy
-```
+4. Curl echo server and observe how the Envoy transparently captures/observes and proxies the traffic:
+   ```sh
+   curl http://127.0.0.1:80
+   ```
 
 ### Configuration
 
