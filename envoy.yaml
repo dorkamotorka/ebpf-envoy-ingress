@@ -4,7 +4,7 @@ static_resources:
   - name: listener_http                     # Name of this listener
     address:
       socket_address:
-        address: 0.0.0.0                    # Listen on all network interfaces
+        address: 127.0.0.1                  # Listen on all localhost interface
         port_value: 8080                    # Port Envoy will listen on for HTTP requests
     filter_chains:
     - filters:
