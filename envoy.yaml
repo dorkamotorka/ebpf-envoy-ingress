@@ -77,11 +77,6 @@ static_resources:
               socket_address:
                 address: 127.0.0.1         # Upstream backend IP
                 port_value: 80             # Upstream backend port (the echo service listens here)
-        - endpoint:
-            address:
-              socket_address:
-                address: 127.0.0.1
-                port_value: 81
 
 # Admin interface for Envoy
 admin:

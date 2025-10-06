@@ -101,6 +101,7 @@ func main() {
 	if err := insertEchoPort(uint32(80), uint64(1), objs.EchoPorts); err != nil {
 		log.Fatalf("Failed to update Echo Port eBPF map: %v", err)
 	}
+
 	log.Printf("Program running..")
 	log.Printf("TProxy redirecting requests on port 80 to process with PID %d and FD %d", *targetPid, *targetFd)
 
