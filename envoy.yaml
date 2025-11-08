@@ -38,6 +38,10 @@ static_resources:
                   cluster: original-dst
 
           http_filters:
+          - name: envoy.filters.http.original_src
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.original_src.v3.OriginalSrc
+              mark: 4242
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

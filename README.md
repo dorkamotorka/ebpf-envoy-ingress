@@ -34,12 +34,16 @@ go build
 
 ### Running
 
-1. Start Envoy and echo server:
+1. Start Envoy:
 
    ```sh
-   docker-compose up -d
+   sudo envoy -c envoy.yaml
    ```
-   **NOTE**: For simplicity, both container are deployed on the host network and the echo server container listens on port 80.
+   and in another terminal a HTTP server:
+   ```sh
+   sudo python3 -m http.server 80
+   ```
+   **NOTE**: eBPF program is configured to only redirect requests to port 80 so we don't mess up with the rest of the network traffic.
 
 2. Find the PID and FD of the Envoy process/socket:
 
