@@ -5,53 +5,35 @@ package main
 import (
 	"os"
 	"log"
+	"net"
 	"flag"
 	"context"
 	"os/signal"
 	"syscall"
+	"strings"
+	"strconv"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
-	"github.com/oraoto/go-pidfd"
 )
 
 const (
 	CGROUP_PATH = "/sys/fs/cgroup" // Root cgroup path
 )
 
-// insertEchoPort stores a (port -> value) entry into the EchoPorts eBPF map.
-// Example:
-// * key: TCP destination port to match
-// * value: currently unused (set to 0) but reserved for future metadata
-func insertEchoPort(key uint32, value uint64, echoPorts *ebpf.Map) error {
-	if err := echoPorts.Put(&key, &value); err != nil {
-		return err
-	}
-	return nil
-}
+var (
+	ifname string
+	ports string
+)
 
 func main() {
-	// CLI parameters:
-	//   -pid: PID of the process that owns the target socket
-	//   -fd : File descriptor number of the socket in that process' FD table
-	targetPid := flag.Int("pid", 0, "Target process PID")
-	targetFd := flag.Int("fd", 0, "Target file descriptor")
+	flag.StringVar(&ifname, "i", "lo", "Network interface name where the eBPF programs will be attached")
+	flag.StringVar(&ports, "ports", "", "List of listening ports (separated by ',')")
 	flag.Parse()
 
-	if *targetPid == 0 || *targetFd == 0 {
-    		flag.PrintDefaults()
-		log.Fatalf("Usage: %s -pid <PID> -fd <FD>", os.Args[0])
-	}
-
-	// Using pidfd avoids PID-reuse races when referring to a specific process.
-	targetPidFd, err := pidfd.Open(*targetPid, 0)
-	if err != nil {
-		log.Fatalf("Cannot open process %d: %v", *targetPid, err)
-	}
-
-	sockFd, err := targetPidFd.GetFd(*targetFd, 0)
-	if err != nil {
-		log.Fatalf("Cannot duplicate fd %d from process %d: %v", *targetFd, *targetPid, err)
+	if ports == "" {
+		flag.Usage()
+		os.Exit(1)
 	}
 
 	// Set up cancellation on SIGINT/SIGTERM.
@@ -70,40 +52,44 @@ func main() {
 	}
 	defer objs.Close()
 
-	var pid uint32 = uint32(*targetPid)
-	var value uint32 = 0
-	if err := objs.tproxyMaps.PidMap.Update(&pid, &value, ebpf.UpdateAny); err != nil {
-		log.Fatalf("Failed to update pid_map (pid %d): %v", pid, err)
+	// Example: backends = "80,8080"
+	// Make sure it doesn't overlap with Envoy listen port
+	portList := strings.Split(ports, ",")
+	for _, port := range portList {
+		port = strings.TrimSpace(port)
+		n, err := strconv.ParseUint(port, 10, 32)
+		if err != nil {
+			panic(err)
+		}
+		if err := objs.tproxyMaps.Ports.Put(uint32(n), uint32(1)); err != nil {
+			log.Fatalf("Error adding port %d to eBPF map: %v", n, err)
+		}
+		log.Printf("Added port %d", n)
 	}
 
-	// Store the duplicated socket FD into the EchoSocket BPF map (key=0).
-	var key uint32 = 0
-	var val uint64 = uint64(sockFd)
-	if err := objs.EchoSocket.Put(&key, &val); err != nil {
-		log.Fatalf("Failed to update Echo Socket eBPF map: %v", err)
-	}
-
-	// Register ports that should be redirected to the chosen socket.
-	// Values are placeholders (0) for now.
-	if err := insertEchoPort(uint32(80), uint64(1), objs.EchoPorts); err != nil {
-		log.Fatalf("Failed to update Echo Port eBPF map: %v", err)
-	}
-
-	// Open our current network namespace; the eBPF program will attach to it.
-	netns, err := os.Open("/proc/self/ns/net")
+	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
-		log.Fatalf("netns: open /proc/self/ns/net failed: %v", err)
+		log.Fatalf("Getting interface %s: %s", ifname, err)
 	}
-	defer netns.Close()
 
-	// Attach the eBPF sk_lookup program to the namespace.
-	// Multiple programs can be attached; they run in the order attached.
-	// Established connections won't trigger sk_lookup.
-	l, err := link.AttachNetNs(int(netns.Fd()), objs.Redirect)
+	tcin, err := link.AttachTCX(link.TCXOptions{
+		Program:   objs.TcIngress,
+		Attach:	   ebpf.AttachTCXIngress,
+		Interface: iface.Index,
+	})
 	if err != nil {
-		log.Fatalf("link: attach to current netns failed: %v", err)
+		log.Fatal("Attaching TC:", err)
 	}
-	defer l.Close()
+	defer tcin.Close()
+	tcout, err := link.AttachTCX(link.TCXOptions{
+		Program:   objs.TcEgress,
+		Attach:	   ebpf.AttachTCXEgress,
+		Interface: iface.Index,
+	})
+	if err != nil {
+		log.Fatal("Attaching TC:", err)
+	}
+	defer tcout.Close()
 
 	s, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    CGROUP_PATH,
@@ -115,8 +101,9 @@ func main() {
 	}
 	defer s.Close()
 
+
 	log.Printf("Program running..")
-	log.Printf("TProxy redirecting requests on port 80 to process with PID %d and FD %d", *targetPid, *targetFd)
+	log.Printf("TProxy redirecting requests to Envoy!")
 
 	// Block until a termination signal is received.
 	<-ctx.Done()
