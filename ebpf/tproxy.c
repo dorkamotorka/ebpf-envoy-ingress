@@ -111,16 +111,6 @@ int tc_both(struct __sk_buff *ctx) {
 	  tcp->dest =
 	      bpf_htons(ENVOY_PORT); // Change the destination port to Envoy proxy port
 	  tcp->check += bpf_htons(diff);
-	  // TODO: is this necessary?
-	  if (!tcp->check) {
-	    tcp->check += bpf_htons(diff);
-	  }
-	  // Print human-readable info (IPv4 addresses in dotted form)
-	  bpf_printk("client: %d.%d.%d.%d:%d -> orig: %d.%d.%d.%d:%d proto=%d",
-		     (k.client_ip4 >> 24) & 0xff, (k.client_ip4 >> 16) & 0xff,
-		     (k.client_ip4 >> 8) & 0xff, k.client_ip4 & 0xff,  bpf_ntohs(tcp->source),
-		     (v.orig_ip4 >> 24) & 0xff, (v.orig_ip4 >> 16) & 0xff,
-		     (v.orig_ip4 >> 8) & 0xff, v.orig_ip4 & 0xff, bpf_ntohs(tcp->dest), k.proto);
 	  bpf_printk("Redirecting in TC ingress...");
 	  bpf_printk("========================================");
 
@@ -132,10 +122,6 @@ int tc_both(struct __sk_buff *ctx) {
 	    int diff = bpf_htons(tcp->source) - bpf_htons(80);
 	    tcp->source = bpf_htons(80); // Change the destination port to original port
 	    tcp->check += bpf_htons(diff);
-	    // TODO: is this necessary?
-	    if (!tcp->check) {
-	      tcp->check += bpf_htons(diff);
-	    }
 	    bpf_printk("Redirecting on egress...");
 	    bpf_printk("========================================");
 	  }
