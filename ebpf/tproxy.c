@@ -75,7 +75,6 @@ int tc_both(struct __sk_buff *ctx) {
 	  if (!val) {
 	    return TC_ACT_OK;
 	  }
-	  bpf_printk("Client port in TC: %d", bpf_ntohs(tcp->source));
 
 	  // Store original dst so Envoy can retrieve it later via getsockopt:
 	  // * Key: client
@@ -108,6 +107,8 @@ int tc_both(struct __sk_buff *ctx) {
 	  __u32 src_port = bpf_ntohs(tcp->source);
 	  if (src_port == ENVOY_PORT) {
 	    // Redirect and recalculate TCP checksum
+	    // TODO: don't hardcode here 80!!!
+	    // TODO: use helper for recalc!
 	    int diff = bpf_htons(tcp->source) - bpf_htons(80);
 	    tcp->source = bpf_htons(80); // Change the destination port to original port
 	    tcp->check += bpf_htons(diff);
