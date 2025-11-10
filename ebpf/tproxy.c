@@ -87,17 +87,20 @@ int tc_both(struct __sk_buff *ctx) {
 	    return TC_ACT_OK;
 	  }
 
-	  // Store original dst so Envoy can retrieve it later via getsockopt
+	  bpf_printk("Client port in TC: %d", bpf_ntohs(tcp->source));
+
+	  // Store original dst so Envoy can retrieve it later via getsockopt:
+	  // * Key: client
+	  // * Value: original destination
 	  struct orig_dst_key4 k = {
-	      .client_ip4 = bpf_ntohl(ip->saddr), // client = src of incoming packet
-	      .client_port = ENVOY_PORT,          // host order
+	      .client_ip4 = ip->saddr,
+	      .client_port = tcp->source,
 	      .proto = IPPROTO_TCP,
 	  };
 	  struct orig_dst_val4 v = {
-	      .orig_ip4 = bpf_ntohl(ip->daddr),  // original dst before redirect
-	      .orig_port = bpf_ntohs(tcp->dest), // host order
+	      .orig_ip4 = ip->daddr,
+	      .orig_port = tcp->dest, 
 	  };
-
 	  int ret = bpf_map_update_elem(&orig_dst4, &k, &v, BPF_ANY);
 	  if (ret != 0) {
 	    return TC_ACT_OK;
@@ -137,17 +140,12 @@ int cg_getsockopt(struct bpf_sockopt *ctx) {
     return 1;
   }
 
-  bpf_printk("getsockopt: src_port=%d dst_port=%d", ctx->sk->src_port,
-             ctx->sk->dst_port);
+  // Key: client -> Value: Original destination
   struct orig_dst_key4 k = {
-      .client_ip4 = bpf_ntohl(ctx->sk->src_ip4), // host order
-      .client_port = ctx->sk->src_port,          // host order
-      .proto = ctx->sk->protocol,                // TCP/UDP
+      .client_ip4 = ctx->sk->dst_ip4,
+      .client_port = ctx->sk->dst_port,
+      .proto = IPPROTO_TCP,
   };
-  bpf_printk("getsockopt key: src_ip4=%d.%d.%d.%d src_port=%d proto=%d\n",
-             (k.client_ip4 >> 24) & 0xff, (k.client_ip4 >> 16) & 0xff,
-             (k.client_ip4 >> 8) & 0xff, k.client_ip4 & 0xff, k.client_port,
-             k.proto);
   struct orig_dst_val4 *v = bpf_map_lookup_elem(&orig_dst4, &k);
   if (!v) {
     return 1;
@@ -159,8 +157,8 @@ int cg_getsockopt(struct bpf_sockopt *ctx) {
   }
 
   sa->sin_family = AF_INET;
-  sa->sin_addr.s_addr = bpf_htonl(v->orig_ip4);
-  sa->sin_port = bpf_htons(v->orig_port);
+  sa->sin_addr.s_addr = v->orig_ip4;
+  sa->sin_port = v->orig_port;
 
   ctx->optlen = sizeof(*sa);
   ctx->retval = 0; // pretend kernel provided it
