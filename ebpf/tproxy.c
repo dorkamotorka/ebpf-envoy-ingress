@@ -22,23 +22,18 @@ struct {
   __uint(max_entries, 1024);
 } ports SEC(".maps");
 
-struct orig_dst_key4 {
-  __u32 client_ip4;
-  __u32 client_port;
+struct tuple3 {
+  __u32 ip4;
+  __u32 port;
   __u32 proto;
-};
-
-struct orig_dst_val4 {
-  __u32 orig_ip4;
-  __u32 orig_port;
 };
 
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
-  __type(key, struct orig_dst_key4);
-  __type(value, struct orig_dst_val4);
+  __type(key, struct tuple3);
+  __type(value, struct tuple3);
   __uint(max_entries, 1024);
-} orig_dst4 SEC(".maps");
+} conntrack SEC(".maps");
 
 SEC("tc")
 int tc_both(struct __sk_buff *ctx) {
@@ -54,29 +49,23 @@ int tc_both(struct __sk_buff *ctx) {
   struct hdr_cursor nh;
   nh.pos = data;
 
-  // Parse Ethernet and IP headers
+  // Parse Ethernet header
+  // TC_ACT_OK if not IPv4
   struct ethhdr *eth;
   int eth_type = parse_ethhdr(&nh, data_end, &eth);
-  if (eth_type != bpf_htons(ETH_P_IP)) {
-    return TC_ACT_OK;
-  }
+  if (eth_type != bpf_htons(ETH_P_IP)) return TC_ACT_OK;
 
-  // If not TCP Protocol -> TC_ACT_OK
+  // Parse IP header
+  // TC_ACT_OK if not TCP
   struct iphdr *ip;
   int ip_type = parse_iphdr(&nh, data_end, &ip);
-  if (ip_type != IPPROTO_TCP) {
-    return TC_ACT_OK;
-  }
+  if (ip_type != IPPROTO_TCP) return TC_ACT_OK;
+  if ((void *)(ip + 1) > data_end) return TC_ACT_OK;
 
-  if ((void *)(ip + 1) > data_end) {
-    return TC_ACT_OK;
-  }
-
+  // Parse TCP header
   struct tcphdr *tcp;
   int tcp_type = parse_tcphdr(&nh, data_end, &tcp);
-  if ((void *)(tcp + 1) > data_end) {
-    return TC_ACT_OK;
-  }
+  if ((void *)(tcp + 1) > data_end) return TC_ACT_OK;
 
   // INGRESS
   if (ctx->ingress_ifindex) {
@@ -86,22 +75,22 @@ int tc_both(struct __sk_buff *ctx) {
 	  if (!val) {
 	    return TC_ACT_OK;
 	  }
-
 	  bpf_printk("Client port in TC: %d", bpf_ntohs(tcp->source));
 
 	  // Store original dst so Envoy can retrieve it later via getsockopt:
 	  // * Key: client
 	  // * Value: original destination
-	  struct orig_dst_key4 k = {
-	      .client_ip4 = ip->saddr,
-	      .client_port = tcp->source,
+	  struct tuple3 client = {
+	      .ip4 = ip->saddr,
+	      .port = tcp->source,
 	      .proto = IPPROTO_TCP,
 	  };
-	  struct orig_dst_val4 v = {
-	      .orig_ip4 = ip->daddr,
-	      .orig_port = tcp->dest, 
+	  struct tuple3 orig_dst = {
+	      .ip4 = ip->daddr,
+	      .port = tcp->dest, 
+	      .proto = IPPROTO_TCP,
 	  };
-	  int ret = bpf_map_update_elem(&orig_dst4, &k, &v, BPF_ANY);
+	  int ret = bpf_map_update_elem(&conntrack, &client, &orig_dst, BPF_ANY);
 	  if (ret != 0) {
 	    return TC_ACT_OK;
 	  }
@@ -141,13 +130,13 @@ int cg_getsockopt(struct bpf_sockopt *ctx) {
   }
 
   // Key: client -> Value: Original destination
-  struct orig_dst_key4 k = {
-      .client_ip4 = ctx->sk->dst_ip4,
-      .client_port = ctx->sk->dst_port,
+  struct tuple3 client = {
+      .ip4 = ctx->sk->dst_ip4,
+      .port = ctx->sk->dst_port,
       .proto = IPPROTO_TCP,
   };
-  struct orig_dst_val4 *v = bpf_map_lookup_elem(&orig_dst4, &k);
-  if (!v) {
+  struct tuple3 *orig_dst = bpf_map_lookup_elem(&conntrack, &client);
+  if (!orig_dst) {
     return 1;
   }
 
@@ -157,8 +146,8 @@ int cg_getsockopt(struct bpf_sockopt *ctx) {
   }
 
   sa->sin_family = AF_INET;
-  sa->sin_addr.s_addr = v->orig_ip4;
-  sa->sin_port = v->orig_port;
+  sa->sin_addr.s_addr = orig_dst->ip4;
+  sa->sin_port = orig_dst->port;
 
   ctx->optlen = sizeof(*sa);
   ctx->retval = 0; // pretend kernel provided it
