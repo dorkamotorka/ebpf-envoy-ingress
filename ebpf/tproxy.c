@@ -41,7 +41,7 @@ struct {
 } orig_dst4 SEC(".maps");
 
 SEC("tc")
-int tc_ingress(struct __sk_buff *ctx) {
+int tc_both(struct __sk_buff *ctx) {
   // Read skb mark (this is what SO_MARK on the socket gets copied to)
   __u32 so_mark = ctx->mark;
   if (so_mark == ENVOY_MARK) {
@@ -81,104 +81,64 @@ int tc_ingress(struct __sk_buff *ctx) {
     return TC_ACT_OK;
   }
 
-  // lookup if the queried port is actually listening
-  __u32 dst_port = bpf_ntohs(tcp->dest);
-  __u32 *val = bpf_map_lookup_elem(&ports, &dst_port);
-  if (!val) {
-    return TC_ACT_OK;
-  }
+  // INGRESS
+  if (ctx->ingress_ifindex) {
+	  // lookup if the queried port is actually listening
+	  __u32 dst_port = bpf_ntohs(tcp->dest);
+	  __u32 *val = bpf_map_lookup_elem(&ports, &dst_port);
+	  if (!val) {
+	    return TC_ACT_OK;
+	  }
 
-  // Store original dst so Envoy can retrieve it later via getsockopt
-  struct orig_dst_key4 k = {
-      .client_ip4 = bpf_ntohl(ip->saddr), // client = src of incoming packet
-      .client_port = ENVOY_PORT,          // host order
-      .proto = IPPROTO_TCP,
-  };
-  struct orig_dst_val4 v = {
-      .orig_ip4 = bpf_ntohl(ip->daddr),  // original dst before redirect
-      .orig_port = bpf_ntohs(tcp->dest), // host order
-  };
+	  // Store original dst so Envoy can retrieve it later via getsockopt
+	  struct orig_dst_key4 k = {
+	      .client_ip4 = bpf_ntohl(ip->saddr), // client = src of incoming packet
+	      .client_port = ENVOY_PORT,          // host order
+	      .proto = IPPROTO_TCP,
+	  };
+	  struct orig_dst_val4 v = {
+	      .orig_ip4 = bpf_ntohl(ip->daddr),  // original dst before redirect
+	      .orig_port = bpf_ntohs(tcp->dest), // host order
+	  };
 
-  int ret = bpf_map_update_elem(&orig_dst4, &k, &v, BPF_ANY);
-  if (ret != 0) {
-    return TC_ACT_OK;
-  }
+	  int ret = bpf_map_update_elem(&orig_dst4, &k, &v, BPF_ANY);
+	  if (ret != 0) {
+	    return TC_ACT_OK;
+	  }
 
-  // Redirect and recalculate TCP checksum
-  int diff = bpf_htons(tcp->dest) - bpf_htons(ENVOY_PORT);
-  tcp->dest =
-      bpf_htons(ENVOY_PORT); // Change the destination port to Envoy proxy port
-  tcp->check += bpf_htons(diff);
-  // TODO: is this necessary?
-  if (!tcp->check) {
-    tcp->check += bpf_htons(diff);
-  }
-  // Print human-readable info (IPv4 addresses in dotted form)
-  bpf_printk("client: %d.%d.%d.%d:%d -> orig: %d.%d.%d.%d:%d proto=%d",
-             (k.client_ip4 >> 24) & 0xff, (k.client_ip4 >> 16) & 0xff,
-             (k.client_ip4 >> 8) & 0xff, k.client_ip4 & 0xff,  bpf_ntohs(tcp->source),
-             (v.orig_ip4 >> 24) & 0xff, (v.orig_ip4 >> 16) & 0xff,
-             (v.orig_ip4 >> 8) & 0xff, v.orig_ip4 & 0xff, bpf_ntohs(tcp->dest), k.proto);
-  bpf_printk("Redirecting in TC ingress...");
-  bpf_printk("========================================");
+	  // Redirect and recalculate TCP checksum
+	  int diff = bpf_htons(tcp->dest) - bpf_htons(ENVOY_PORT);
+	  tcp->dest =
+	      bpf_htons(ENVOY_PORT); // Change the destination port to Envoy proxy port
+	  tcp->check += bpf_htons(diff);
+	  // TODO: is this necessary?
+	  if (!tcp->check) {
+	    tcp->check += bpf_htons(diff);
+	  }
+	  // Print human-readable info (IPv4 addresses in dotted form)
+	  bpf_printk("client: %d.%d.%d.%d:%d -> orig: %d.%d.%d.%d:%d proto=%d",
+		     (k.client_ip4 >> 24) & 0xff, (k.client_ip4 >> 16) & 0xff,
+		     (k.client_ip4 >> 8) & 0xff, k.client_ip4 & 0xff,  bpf_ntohs(tcp->source),
+		     (v.orig_ip4 >> 24) & 0xff, (v.orig_ip4 >> 16) & 0xff,
+		     (v.orig_ip4 >> 8) & 0xff, v.orig_ip4 & 0xff, bpf_ntohs(tcp->dest), k.proto);
+	  bpf_printk("Redirecting in TC ingress...");
+	  bpf_printk("========================================");
 
-  return TC_ACT_OK;
-}
-
-SEC("tc")
-int tc_egress(struct __sk_buff *ctx) {
-  // Read skb mark (this is what SO_MARK on the socket gets copied to)
-  __u32 so_mark = ctx->mark;
-  if (so_mark == ENVOY_MARK) {
-    bpf_printk("Traffic from Envoy - don't redirect on egress!");
-    return TC_ACT_OK;
-  }
-
-  void *data_end = (void *)(unsigned long long)ctx->data_end;
-  void *data = (void *)(unsigned long long)ctx->data;
-  struct hdr_cursor nh;
-  nh.pos = data;
-
-  // Parse Ethernet and IP headers
-  int ip_type;
-  struct iphdr *ip;
-  struct ethhdr *eth;
-  int eth_type = parse_ethhdr(&nh, data_end, &eth);
-  if (eth_type == bpf_htons(ETH_P_IP)) {
-    ip_type = parse_iphdr(&nh, data_end, &ip);
+  // EGRESS
   } else {
-    // Default action, pass it up the GNU/Linux network stack to be handled
-    return TC_ACT_OK;
-  }
-
-  // If not TCP Protocol -> TC_ACT_OK
-  if (ip_type != IPPROTO_TCP) {
-    return TC_ACT_OK;
-  }
-
-  if ((void *)(ip + 1) > data_end) {
-    return TC_ACT_OK;
-  }
-
-  struct tcphdr *tcp;
-  int tcp_type = parse_tcphdr(&nh, data_end, &tcp);
-  if ((void *)(tcp + 1) > data_end) {
-    return TC_ACT_OK;
-  }
-
-  // lookup if the destination is in the eBPF map
-  __u32 src_port = bpf_ntohs(tcp->source);
-  if (src_port == ENVOY_PORT) {
-    // Redirect and recalculate TCP checksum
-    int diff = bpf_htons(tcp->source) - bpf_htons(80);
-    tcp->source = bpf_htons(80); // Change the destination port to original port
-    tcp->check += bpf_htons(diff);
-    // TODO: is this necessary?
-    if (!tcp->check) {
-      tcp->check += bpf_htons(diff);
-    }
-    bpf_printk("Redirecting on egress...");
-    bpf_printk("========================================");
+	  __u32 src_port = bpf_ntohs(tcp->source);
+	  if (src_port == ENVOY_PORT) {
+	    // Redirect and recalculate TCP checksum
+	    int diff = bpf_htons(tcp->source) - bpf_htons(80);
+	    tcp->source = bpf_htons(80); // Change the destination port to original port
+	    tcp->check += bpf_htons(diff);
+	    // TODO: is this necessary?
+	    if (!tcp->check) {
+	      tcp->check += bpf_htons(diff);
+	    }
+	    bpf_printk("Redirecting on egress...");
+	    bpf_printk("========================================");
+	  }
   }
 
   return TC_ACT_OK;

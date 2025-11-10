@@ -73,21 +73,21 @@ func main() {
 	}
 
 	tcin, err := link.AttachTCX(link.TCXOptions{
-		Program:   objs.TcIngress,
+		Program:   objs.TcBoth,
 		Attach:	   ebpf.AttachTCXIngress,
 		Interface: iface.Index,
 	})
 	if err != nil {
-		log.Fatal("Attaching TC:", err)
+		log.Fatal("Attaching TC on Ingress:", err)
 	}
 	defer tcin.Close()
 	tcout, err := link.AttachTCX(link.TCXOptions{
-		Program:   objs.TcEgress,
+		Program:   objs.TcBoth,
 		Attach:	   ebpf.AttachTCXEgress,
 		Interface: iface.Index,
 	})
 	if err != nil {
-		log.Fatal("Attaching TC:", err)
+		log.Fatal("Attaching TC on Egress:", err)
 	}
 	defer tcout.Close()
 
