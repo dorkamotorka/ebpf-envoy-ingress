@@ -1,5 +1,4 @@
 //go:build ignore
-
 #include "vmlinux.h"
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
@@ -34,14 +33,6 @@ struct {
 	__type(value, struct tuple3);
 	__uint(max_entries, 1024);
 } conntrack SEC(".maps");
-
-static __always_inline __u16 csum_fold_helper(__u32 csum)
-{
-	// fold 32-bit into 16-bit and complement
-	csum = (csum & 0xffff) + (csum >> 16);
-	csum = (csum & 0xffff) + (csum >> 16);
-	return ~csum;
-}
 
 SEC("tc")
 int tc_both(struct __sk_buff* ctx)
@@ -81,6 +72,7 @@ int tc_both(struct __sk_buff* ctx)
 		return TC_ACT_OK;
 
 	int csum_off = (int) ((void*) &tcp->check - data);
+
 	// INGRESS
 	if (ctx->ingress_ifindex) {
 		// lookup if the queried port is actually listening
@@ -109,6 +101,7 @@ int tc_both(struct __sk_buff* ctx)
 			return TC_ACT_OK;
 		}
 
+		// Store ports for TCP checksum recalculation
 		__u16 old_dport = tcp->dest;
 		__u16 new_dport = bpf_htons(ENVOY_PORT);
 
@@ -116,24 +109,34 @@ int tc_both(struct __sk_buff* ctx)
 		tcp->dest = bpf_htons(ENVOY_PORT);
 		bpf_printk("Redirecting in TC ingress...");
 		bpf_printk("========================================");
-		// update TCP checksum in-place (flags = field length in bytes)
+		// Recalculate TCP checksum
 		bpf_l4_csum_replace(
 			ctx, csum_off, old_dport, new_dport, sizeof(__be16));
 
-		// EGRESS
+	// EGRESS
 	} else {
 		__u32 src_port = bpf_ntohs(tcp->source);
 		if (src_port == ENVOY_PORT) {
+			struct tuple3 client = {
+				.ip4 = ip->daddr,
+				.port = tcp->dest,
+				.proto = IPPROTO_TCP,
+			};
+			struct tuple3* orig_src = bpf_map_lookup_elem(&conntrack, &client);
+			if (!orig_src) {
+				return 1;
+			}
+
+			// Store ports for TCP checksum recalculation
 			__u16 old_sport = tcp->source;
-			__u16 new_sport = bpf_htons(
-				80); // TODO: look up original instead of hardcoding
+			__u16 new_sport = orig_src->port;
 
 			// Replace back the original destination port so client doesn't know it talks to the envoy
-			// TODO: don't hardcode here 80!!!
-			tcp->source = bpf_htons(80);
+			tcp->source = orig_src->port;
 			bpf_printk("Redirecting on egress...");
 			bpf_printk("========================================");
 
+			// Recalculate TCP checksum
 			bpf_l4_csum_replace(ctx, csum_off, old_sport, new_sport,
 				sizeof(__be16));
 		}
@@ -177,7 +180,7 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 	ctx->optlen = sizeof(*sa);
 	ctx->retval = 0; // pretend kernel provided it
 	bpf_printk("Retrieved original destination...");
-	return 1; // allow; retval already set
+	return 1; 
 }
 
 SEC("license") const char __license[] = "Dual BSD/GPL";
