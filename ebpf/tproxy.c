@@ -55,18 +55,15 @@ int tc_both(struct __sk_buff *ctx) {
   nh.pos = data;
 
   // Parse Ethernet and IP headers
-  int ip_type;
-  struct iphdr *ip;
   struct ethhdr *eth;
   int eth_type = parse_ethhdr(&nh, data_end, &eth);
-  if (eth_type == bpf_htons(ETH_P_IP)) {
-    ip_type = parse_iphdr(&nh, data_end, &ip);
-  } else {
-    // Default action, pass it up the GNU/Linux network stack to be handled
+  if (eth_type != bpf_htons(ETH_P_IP)) {
     return TC_ACT_OK;
   }
 
   // If not TCP Protocol -> TC_ACT_OK
+  struct iphdr *ip;
+  int ip_type = parse_iphdr(&nh, data_end, &ip);
   if (ip_type != IPPROTO_TCP) {
     return TC_ACT_OK;
   }
