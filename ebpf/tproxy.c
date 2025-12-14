@@ -119,6 +119,7 @@ int tc_both(struct __sk_buff* ctx)
 		   (ip->daddr >> 16) & 0xff,
 		   (ip->daddr >> 24) & 0xff,
 		   bpf_ntohs(tcp->dest));
+		bpf_printk("Changed ports on ingress from %d to %d", bpf_ntohs(old_dport), bpf_ntohs(new_dport));
 		bpf_printk("========================================");
 		// Recalculate TCP checksum
 		bpf_l4_csum_replace(
@@ -129,13 +130,13 @@ int tc_both(struct __sk_buff* ctx)
 		__u32 src_port = bpf_ntohs(tcp->source);
 		if (src_port == ENVOY_PORT) {
 			struct tuple3 client = {
-				.ip4 = ip->saddr,
-				.port = tcp->src,
+				.ip4 = ip->daddr,
+				.port = tcp->dest,
 				.proto = IPPROTO_TCP,
 			};
 			struct tuple3* orig_src = bpf_map_lookup_elem(&conntrack, &client);
 			if (!orig_src) {
-				return 1;
+				return TC_ACT_OK;
 			}
 
 			// Store ports for TCP checksum recalculation
@@ -156,6 +157,7 @@ int tc_both(struct __sk_buff* ctx)
 			   (ip->daddr >> 16) & 0xff,
 			   (ip->daddr >> 24) & 0xff,
 			   bpf_ntohs(tcp->dest));
+			bpf_printk("Changed ports on egress from %d to %d", bpf_ntohs(old_sport), bpf_ntohs(new_sport));
 			bpf_printk("========================================");
 
 			// Recalculate TCP checksum

@@ -1,7 +1,6 @@
 static_resources:
   listeners:
   - name: listener_http
-    #transparent: true 
     address:
       socket_address:
         address: 0.0.0.0 
@@ -11,10 +10,6 @@ static_resources:
     - name: envoy.filters.listener.original_dst
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
-    - name: envoy.filters.listener.original_src
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.listener.original_src.v3.OriginalSrc
-        mark: 4242
 
     filter_chains:
     - filters:
@@ -75,6 +70,12 @@ static_resources:
     type: ORIGINAL_DST
     connect_timeout: 1s
     lb_policy: CLUSTER_PROVIDED
+    upstream_bind_config:
+      socket_options:
+      - level: 1        # SOL_SOCKET
+        name: 36        # SO_MARK (Linux)
+        int_value: 4242
+        state: STATE_PREBIND
 
 admin:
   address:
