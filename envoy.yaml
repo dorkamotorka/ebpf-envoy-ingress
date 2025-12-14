@@ -1,9 +1,10 @@
 static_resources:
   listeners:
   - name: listener_http
+    #transparent: true 
     address:
       socket_address:
-        address: 127.0.0.1
+        address: 0.0.0.0 
         port_value: 8080
     # ask the kernel for the original dst (which we set in our eBPF hook)
     listener_filters:
@@ -21,7 +22,8 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
-
+          #use_remote_address: true
+          #xff_num_trusted_hops: 0
           route_config:
             name: echo_route
             virtual_hosts:

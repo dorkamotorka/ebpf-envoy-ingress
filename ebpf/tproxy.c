@@ -107,7 +107,18 @@ int tc_both(struct __sk_buff* ctx)
 
 		// Redirect to envoy
 		tcp->dest = bpf_htons(ENVOY_PORT);
-		bpf_printk("Redirecting in TC ingress...");
+		bpf_printk("Redirecting connection on ingress to be: client %d.%d.%d.%d:%u -> server %d.%d.%d.%d:%u",
+		   ip->saddr & 0xff,
+		   (ip->saddr >> 8) & 0xff,
+		   (ip->saddr >> 16) & 0xff,
+		   (ip->saddr >> 24) & 0xff,
+		   bpf_ntohs(tcp->source),
+
+		   ip->daddr & 0xff,
+		   (ip->daddr >> 8) & 0xff,
+		   (ip->daddr >> 16) & 0xff,
+		   (ip->daddr >> 24) & 0xff,
+		   bpf_ntohs(tcp->dest));
 		bpf_printk("========================================");
 		// Recalculate TCP checksum
 		bpf_l4_csum_replace(
@@ -118,8 +129,8 @@ int tc_both(struct __sk_buff* ctx)
 		__u32 src_port = bpf_ntohs(tcp->source);
 		if (src_port == ENVOY_PORT) {
 			struct tuple3 client = {
-				.ip4 = ip->daddr,
-				.port = tcp->dest,
+				.ip4 = ip->saddr,
+				.port = tcp->src,
 				.proto = IPPROTO_TCP,
 			};
 			struct tuple3* orig_src = bpf_map_lookup_elem(&conntrack, &client);
@@ -133,7 +144,18 @@ int tc_both(struct __sk_buff* ctx)
 
 			// Replace back the original destination port so client doesn't know it talks to the envoy
 			tcp->source = orig_src->port;
-			bpf_printk("Redirecting on egress...");
+			bpf_printk("Redirecting connection on egress to be: server %d.%d.%d.%d:%u -> client %d.%d.%d.%d:%u",
+			   ip->saddr & 0xff,
+			   (ip->saddr >> 8) & 0xff,
+			   (ip->saddr >> 16) & 0xff,
+			   (ip->saddr >> 24) & 0xff,
+			   bpf_ntohs(tcp->source),
+
+			   ip->daddr & 0xff,
+			   (ip->daddr >> 8) & 0xff,
+			   (ip->daddr >> 16) & 0xff,
+			   (ip->daddr >> 24) & 0xff,
+			   bpf_ntohs(tcp->dest));
 			bpf_printk("========================================");
 
 			// Recalculate TCP checksum
@@ -167,6 +189,7 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 	if (!orig_dst) {
 		return 1;
 	}
+	bpf_printk("Found original destination");
 
 	struct sockaddr_in* sa = (struct sockaddr_in*) ctx->optval;
 	if ((void*) (sa + 1) > ctx->optval_end) {
@@ -177,9 +200,20 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 	sa->sin_addr.s_addr = orig_dst->ip4;
 	sa->sin_port = orig_dst->port;
 
+	bpf_printk(
+	    "getsockopt SO_ORIGINAL_DST returned: "
+	    "%d.%d.%d.%d:%u",
+	    sa->sin_addr.s_addr & 0xff,
+	    (sa->sin_addr.s_addr >> 8) & 0xff,
+	    (sa->sin_addr.s_addr >> 16) & 0xff,
+	    (sa->sin_addr.s_addr >> 24) & 0xff,
+	    bpf_ntohs(sa->sin_port)
+	);
+
 	ctx->optlen = sizeof(*sa);
 	ctx->retval = 0; // pretend kernel provided it
 	bpf_printk("Retrieved original destination...");
+	bpf_printk("========================================");
 	return 1; 
 }
 

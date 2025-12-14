@@ -101,7 +101,6 @@ func main() {
 	}
 	defer s.Close()
 
-
 	log.Printf("Program running..")
 	log.Printf("TProxy redirecting requests to Envoy!")
 
