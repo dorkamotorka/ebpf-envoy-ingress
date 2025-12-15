@@ -35,12 +35,15 @@ struct {
 } conntrack SEC(".maps");
 
 SEC("tc")
-int tc_both(struct __sk_buff* ctx)
-{
-	// Read skb mark (this is what SO_MARK on the socket gets copied to)
+int tc_both(struct __sk_buff* ctx) {
+	// In case the traffic between envoy and the service goes through the same interface
+	// to which the TC program is attached we need to avoid re-directing this traffic back to envoy (causing a loop).
+	// We achieve this by marking.
+	// An example would be attaching this program to `lo` interface and making the request from the same machine to
+	// an endpoint on the localhost.
 	__u32 so_mark = ctx->mark;
 	if (so_mark == ENVOY_MARK) {
-		bpf_printk("Traffic from Envoy - don't redirect on ingress!");
+		bpf_printk("Traffic from Envoy - don't re-redirect!");
 		return TC_ACT_OK;
 	}
 
@@ -50,39 +53,42 @@ int tc_both(struct __sk_buff* ctx)
 	nh.pos = data;
 
 	// Parse Ethernet header
-	// TC_ACT_OK if not IPv4
 	struct ethhdr* eth;
 	int eth_type = parse_ethhdr(&nh, data_end, &eth);
-	if (eth_type != bpf_htons(ETH_P_IP))
+	if (eth_type != bpf_htons(ETH_P_IP)) {
 		return TC_ACT_OK;
+	}
 
 	// Parse IP header
-	// TC_ACT_OK if not TCP
 	struct iphdr* ip;
 	int ip_type = parse_iphdr(&nh, data_end, &ip);
-	if (ip_type != IPPROTO_TCP)
+	if (ip_type != IPPROTO_TCP) {
 		return TC_ACT_OK;
-	if ((void*) (ip + 1) > data_end)
+	}
+	if ((void*) (ip + 1) > data_end) {
 		return TC_ACT_OK;
+	}
 
 	// Parse TCP header
 	struct tcphdr* tcp;
 	int tcp_type = parse_tcphdr(&nh, data_end, &tcp);
-	if ((void*) (tcp + 1) > data_end)
+	if ((void*) (tcp + 1) > data_end) {
 		return TC_ACT_OK;
+	}
 
 	int csum_off = (int) ((void*) &tcp->check - data);
 
 	// INGRESS
 	if (ctx->ingress_ifindex) {
 		// lookup if the queried port is actually listening
+		// We do this to limit redirection to envoy only for requests to specific ports
 		__u32 dst_port = bpf_ntohs(tcp->dest);
 		__u32* val = bpf_map_lookup_elem(&ports, &dst_port);
 		if (!val) {
 			return TC_ACT_OK;
 		}
 
-		// Store original dst so Envoy can retrieve it later via getsockopt:
+		// Store original dst so Envoy can retrieve it later on egress as well as getsockopt:
 		// * Key: client
 		// * Value: original destination
 		struct tuple3 client = {
@@ -105,22 +111,9 @@ int tc_both(struct __sk_buff* ctx)
 		__u16 old_dport = tcp->dest;
 		__u16 new_dport = bpf_htons(ENVOY_PORT);
 
-		// Redirect to envoy
+		// Redirect to envoy port
 		tcp->dest = bpf_htons(ENVOY_PORT);
-		bpf_printk("Redirecting connection on ingress to be: client %d.%d.%d.%d:%u -> server %d.%d.%d.%d:%u",
-		   ip->saddr & 0xff,
-		   (ip->saddr >> 8) & 0xff,
-		   (ip->saddr >> 16) & 0xff,
-		   (ip->saddr >> 24) & 0xff,
-		   bpf_ntohs(tcp->source),
 
-		   ip->daddr & 0xff,
-		   (ip->daddr >> 8) & 0xff,
-		   (ip->daddr >> 16) & 0xff,
-		   (ip->daddr >> 24) & 0xff,
-		   bpf_ntohs(tcp->dest));
-		bpf_printk("Changed ports on ingress from %d to %d", bpf_ntohs(old_dport), bpf_ntohs(new_dport));
-		bpf_printk("========================================");
 		// Recalculate TCP checksum
 		bpf_l4_csum_replace(
 			ctx, csum_off, old_dport, new_dport, sizeof(__be16));
@@ -145,20 +138,6 @@ int tc_both(struct __sk_buff* ctx)
 
 			// Replace back the original destination port so client doesn't know it talks to the envoy
 			tcp->source = orig_src->port;
-			bpf_printk("Redirecting connection on egress to be: server %d.%d.%d.%d:%u -> client %d.%d.%d.%d:%u",
-			   ip->saddr & 0xff,
-			   (ip->saddr >> 8) & 0xff,
-			   (ip->saddr >> 16) & 0xff,
-			   (ip->saddr >> 24) & 0xff,
-			   bpf_ntohs(tcp->source),
-
-			   ip->daddr & 0xff,
-			   (ip->daddr >> 8) & 0xff,
-			   (ip->daddr >> 16) & 0xff,
-			   (ip->daddr >> 24) & 0xff,
-			   bpf_ntohs(tcp->dest));
-			bpf_printk("Changed ports on egress from %d to %d", bpf_ntohs(old_sport), bpf_ntohs(new_sport));
-			bpf_printk("========================================");
 
 			// Recalculate TCP checksum
 			bpf_l4_csum_replace(ctx, csum_off, old_sport, new_sport,
@@ -191,7 +170,6 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 	if (!orig_dst) {
 		return 1;
 	}
-	bpf_printk("Found original destination");
 
 	struct sockaddr_in* sa = (struct sockaddr_in*) ctx->optval;
 	if ((void*) (sa + 1) > ctx->optval_end) {
@@ -202,20 +180,8 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 	sa->sin_addr.s_addr = orig_dst->ip4;
 	sa->sin_port = orig_dst->port;
 
-	bpf_printk(
-	    "getsockopt SO_ORIGINAL_DST returned: "
-	    "%d.%d.%d.%d:%u",
-	    sa->sin_addr.s_addr & 0xff,
-	    (sa->sin_addr.s_addr >> 8) & 0xff,
-	    (sa->sin_addr.s_addr >> 16) & 0xff,
-	    (sa->sin_addr.s_addr >> 24) & 0xff,
-	    bpf_ntohs(sa->sin_port)
-	);
-
 	ctx->optlen = sizeof(*sa);
 	ctx->retval = 0; // pretend kernel provided it
-	bpf_printk("Retrieved original destination...");
-	bpf_printk("========================================");
 	return 1; 
 }
 
