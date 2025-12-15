@@ -69,6 +69,8 @@ static_resources:
     type: ORIGINAL_DST
     connect_timeout: 1s
     lb_policy: CLUSTER_PROVIDED
+    # Append the SO_MARK to the upstream connection to
+    # avoid re-redirection - check eBPF program code comments
     upstream_bind_config:
       socket_options:
       - level: 1        # SOL_SOCKET
