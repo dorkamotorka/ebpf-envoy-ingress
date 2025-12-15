@@ -17,8 +17,7 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
-          #use_remote_address: true
-          #xff_num_trusted_hops: 0
+          use_remote_address: true
           route_config:
             name: echo_route
             virtual_hosts:
