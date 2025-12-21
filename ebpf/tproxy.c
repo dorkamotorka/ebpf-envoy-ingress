@@ -28,10 +28,10 @@ struct tuple3 {
 };
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__type(key, struct tuple3);
 	__type(value, struct tuple3);
-	__uint(max_entries, 1024);
+	__uint(max_entries, 65536);
 } conntrack SEC(".maps");
 
 SEC("tc")
@@ -43,7 +43,7 @@ int tc_both(struct __sk_buff* ctx) {
 	// an endpoint on the localhost.
 	__u32 so_mark = ctx->mark;
 	if (so_mark == ENVOY_MARK) {
-		bpf_printk("Traffic from Envoy - don't re-redirect!");
+		//bpf_printk("Traffic from Envoy - don't re-redirect!");
 		return TC_ACT_OK;
 	}
 
