@@ -183,6 +183,7 @@ int cg_getsockopt(struct bpf_sockopt* ctx)
 
 	ctx->optlen = sizeof(*sa);
 	ctx->retval = 0; // pretend kernel provided it
+	//bpf_printk("getsockopt succesful..");
 	return 1; 
 }
 

@@ -89,7 +89,6 @@ static_resources:
       #- level: 6        # IPPROTO_TCP
       #  name: 1         # TCP_NODELAY (Disables Nagle's Algorithm)
       #  int_value: 1
-      #  #state: STATE_PREBIND
 
 admin:
   address:
