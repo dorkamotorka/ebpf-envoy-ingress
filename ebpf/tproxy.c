@@ -12,8 +12,6 @@
 #define TC_ACT_OK 0
 #define TC_ACT_SHOT 2
 
-// Map of open service ports that we listen on for requests
-// TODO: is it possible to retrieve this from some kernel table
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, __u32); // Port number
@@ -118,6 +116,8 @@ int tc_both(struct __sk_buff* ctx) {
 		bpf_l4_csum_replace(
 			ctx, csum_off, old_dport, new_dport, sizeof(__be16));
 
+		//bpf_printk("Redirected on ingress...");
+
 	// EGRESS
 	} else {
 		__u32 src_port = bpf_ntohs(tcp->source);
@@ -142,6 +142,7 @@ int tc_both(struct __sk_buff* ctx) {
 			// Recalculate TCP checksum
 			bpf_l4_csum_replace(ctx, csum_off, old_sport, new_sport,
 				sizeof(__be16));
+			//bpf_printk("Redirected on egress...");
 		}
 	}
 
