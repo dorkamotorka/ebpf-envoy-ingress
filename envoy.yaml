@@ -35,10 +35,6 @@ static_resources:
         name: 36        # SO_MARK (Linux)
         int_value: 4242
         state: STATE_PREBIND
-      # NOTE: Uncomment to configure TCP_NODELAY on upstream socket
-      #- level: 6        # IPPROTO_TCP
-      #  name: 1         # TCP_NODELAY (Disables Nagle's Algorithm)
-      #  int_value: 1
 
 admin:
   address:
